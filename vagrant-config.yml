@@ -1,0 +1,25 @@
+# https://gist.github.com/gnarf/b103e77f37236ca72d8e
+# SOURCE: \cat roles/*/vagrant-config.yml | pbcopy
+:vms:
+  ubuntu-zeek:
+    :hostname: "ubuntu-zeek"
+    :name: "ubuntu-zeek"
+    :type: "master"
+    :box: "ubuntu/bionic64"
+    :eth1: "192.168.12.25"
+    :ip: "192.168.12.25"
+    :mem: 6048
+    :ram: 6048
+    :cpu: 2
+    :id: 10
+  fedora-zeek:
+    :hostname: "fedora-zeek"
+    :name: "fedora-zeek"
+    :type: "master"
+    :box: "fedora/29-cloud-base"
+    :eth1: "192.168.13.26"
+    :ip: "192.168.13.26"
+    :mem: 6048
+    :ram: 6048
+    :cpu: 2
+    :id: 11
