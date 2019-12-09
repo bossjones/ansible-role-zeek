@@ -479,3 +479,4 @@ Gemfile*
 ansible-role-tmux/
 boss-ansible-role-debug/
 zzet.rbenv/
+juju4.*
