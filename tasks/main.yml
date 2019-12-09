@@ -1,5 +1,8 @@
 ---
 
+- name: Maxmind | geo data
+  include_vars: "maxmind.yml"
+
 - name: Include version-specific variables for Ubuntu.
   include_vars: "{{ ansible_distribution }}-{{ ansible_distribution_version }}.yml"
   when: ansible_distribution == 'Ubuntu'

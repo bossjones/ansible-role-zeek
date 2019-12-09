@@ -94,3 +94,6 @@ broids_misp2bro_sensors: [ 'example.bro' ]
 #broids_scripts_version: HEAD
 
 broids_testing: false
+
+
+maxmind_rootdir: /var/maxmind
