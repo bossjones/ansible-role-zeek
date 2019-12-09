@@ -1,0 +1,81 @@
+---
+- name: Debian | Install Bro dependencies
+  apt:
+    name:
+      - cmake
+      - make
+      - gcc
+      - g++
+      - flex
+      - bison
+      - libpcap-dev
+      - libgeoip-dev
+      - libssl-dev
+      - python-dev
+      - zlib1g-dev
+      - libmagic-dev
+      - swig2.0
+      - git
+      - curl
+      - libgoogle-perftools-dev
+      - "{{ broids_packages_deps }}"
+    state: present
+    update_cache: yes
+  when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
+  register: pkg_result
+  until: pkg_result is success
+- name: Redhat | Install Bro dependencies
+  yum:
+    name:
+      - cmake
+      - make
+      - gcc
+      - gcc-c++
+      - flex
+      - bison
+      - libpcap-devel
+      - openssl-devel
+      - python-devel
+      - swig
+      - zlib-devel
+      - file-devel
+      - "{{ broids_packages_deps }}"
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "RedHat"
+  register: pkg_result
+  until: pkg_result is success
+
+- name: Check if bro archive already exists
+  stat: path=/root/bro-{{ bro_v }}.tar.gz
+  register: broarchive
+- name: Download BRO archive
+## github archive doesn't contain submodules/not recursive
+  #get_url: url=https://github.com/bro/bro/archive/v{{ bro_v }}.tar.gz
+  get_url:
+    url: "{{ bro_src_url }}"
+    dest: "/root/bro-{{ bro_v }}.tar.gz"
+    mode: '0400'
+    checksum: "sha256:{{ bro_archive_sha256 }}"
+  when: not broarchive.stat.exists
+- name: Check if bro binary exists
+  stat: path={{ bro_prefix }}/bin/bro
+  register: brobin
+- name: compile and install bro
+  command: "{{ item.command }}"
+  args:
+    chdir: "{{ item.chdir }}"
+    creates: "{{ item.c }}"
+  with_items:
+## https://github.com/ansible/ansible/issues/8260
+    - { command: 'tar xzf /root/bro-{{ bro_v }}.tar.gz', chdir: '/root', c: '/root/bro-{{ bro_v }}/configure' }
+    - { command: './configure --prefix={{ bro_prefix }} --spooldir={{ broids_spool }} --logdir={{ broids_log }} --conf-files-dir={{ broids_etc }}',
+        chdir: '/root/bro-{{ bro_v }}',
+        c: '/root/bro-{{ bro_v }}/build/Makefile'
+      }
+    - { command: 'make', chdir: '/root/bro-{{ bro_v }}', c: '/root/bro-{{ bro_v }}/build/src/bro' }
+    - { command: 'make install', chdir: '/root/bro-{{ bro_v }}', c: "{{ bro_prefix }}/bin/bro" }
+  when: not brobin.stat.exists
+
+- name: ensure bro group exists
+  group: name=bro state=present

@@ -1,0 +1,75 @@
+---
+
+## http://nullsecure.org/building-your-own-passivedns-feed/
+## OR ? http://stackoverflow.com/questions/16444306/ansible-idempotent-mysql-installation-playbook
+## is mysql_install_db necessary? probably not
+#- name: setup database
+#  command: "{{ item }}"
+#  with_items:
+#    - mysql_install_db
+#    - mysql_secure_installation    ## interactive
+
+- name: check that mysql is running
+  service: "name={{ mysql_svc }} state=started"
+
+- name: check if root my.cnf file
+  stat: path=/root/.my.cnf
+  register: mycnf
+
+- name: Ensure root my.cnf is set
+  ini_file:
+    path: /root/.my.cnf
+    section: client
+    option: "{{ item.o }}"
+    value: "{{ item.v }}"
+    mode: '0600'
+    backup: yes
+  with_items:
+   - { o: user, v: root }
+   - { o: password, v: "{{ mysql_old_root_password | default('') }}" }
+  when: not mycnf.stat.exists
+
+- name: Set mysql root user password
+  mysql_user:
+    name: root
+    host: "{{ item }}"
+    password: "{{ mysql_root_password }}"
+    state: present
+  with_items:
+        - "{{ ansible_hostname }}"
+        - 127.0.0.1
+        - ::1
+        - localhost
+  ignore_errors: true
+- name: ensure pdns database exists
+  mysql_db:
+    name: pdns
+    state: present
+    login_user: "{{ mysql_user }}"
+    login_password: "{{ mysql_root_password }}"
+- name: ensure pdns db user exists
+  mysql_user:
+    name: "{{ mysql_pdns_user }}"
+    password: "{{ mysql_pdns_pass }}"
+    priv: pdns.*:ALL
+    state: present
+    login_user: "{{ mysql_user }}"
+    login_password: "{{ mysql_root_password }}"
+
+- name: delete anonymous MySQL server user for localhost
+  action: mysql_user user="" state="absent" login_user="{{ mysql_user }}" login_password="{{ mysql_root_password }}"
+- name: remove the MySQL test database
+  action: mysql_db db=test state=absent login_user="{{ mysql_user }}" login_password="{{ mysql_root_password }}"
+
+- name: Install Pdns requirements
+  pip: name=bottle state=present
+  register: pkg_result
+  until: pkg_result is success
+
+## 2016-2017 ongoing: rewrite in go without bro module
+- name: git clone bro-pdns
+  git:
+    repo: https://github.com/JustinAzoff/bro-pdns.git
+    dest: "{{ broids_site }}/bro-pdns"
+    version: master
+#    version=4d94969386186b879a17c5f40dfbb12d2ecaa21e

@@ -1,0 +1,17 @@
+---
+## https://engineering.salesforce.com/open-sourcing-ja3-92c9e53c3c41
+## https://github.com/salesforce/ja3/tree/master/bro
+
+- name: Create ja3 directory in bro site
+  file:
+    dest: "{{ broids_site }}/ja3"
+    state: directory
+    mode: '0755'
+
+- name: Download ja3 bro scripts
+  get_url:
+    url: "{{ item.u }}"
+    dest: "{{ broids_site }}/ja3/{{ item.u | basename }}"
+    checksum: "{{ item.c }}"
+    backup: yes
+  with_items: "{{ broids_ja3_files }}"

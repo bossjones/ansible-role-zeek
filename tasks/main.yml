@@ -1,4 +1,174 @@
-# -*- coding: utf-8 -*-
-# tasks for  ansible-role-zeek
 ---
 
+- name: Include version-specific variables for Ubuntu.
+  include_vars: "{{ ansible_distribution }}-{{ ansible_distribution_version }}.yml"
+  when: ansible_distribution == 'Ubuntu'
+- name: Include version-specific variables for RedHat
+  include_vars: "RedHat-{{ ansible_distribution_version.split('.')[0] }}.yml"
+  when: ansible_os_family == "RedHat"
+- name: Include securityonion variables
+  include_vars: securityonion.yml
+  when: >
+    use_securityonion_deb and
+    (ansible_distribution_release == "precise" or ansible_distribution_release == "trusty")
+
+- name: Debian | Install Bro dependencies
+  apt:
+    name: ['git', 'gdb', 'python-pip']
+    state: present
+    update_cache: yes
+  when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
+  register: pkg_result
+  until: pkg_result is success
+
+- include: pyopenssl.yml
+
+- name: Debian-based | install bro
+  include: debian.yml
+  when: not bro_force_source_build and (ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu')
+
+- name: Redhat-based | install bro
+  include: redhat.yml
+  when: not bro_force_source_build and ansible_os_family == "RedHat"
+
+- name: install bro from source
+  include: source.yml
+  when: bro_force_source_build
+
+## Extra configuration
+- name: Add BROPATH to /etc/profile
+  lineinfile:
+    dest: /etc/profile
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+    create: yes
+  with_items:
+    - { regexp: '^export BROPATH=', line: 'export BROPATH={{ bro_prefix }}' }
+    - { regexp: '^export PATH=', line: 'export PATH=$PATH:$BROPATH/bin' }
+
+- name: ensure bro directories exist
+  file: dest={{ item }} state=directory mode=0775 group={{ broids_group }}
+  with_items:
+    - "{{ broids_site }}"
+    - "{{ broids_log }}"
+    - "{{ broids_log }}/stats"
+    - "{{ broids_spool }}"
+    - "{{ broids_spool }}/misp2bro"
+    - "/usr/share/bro/intel"
+
+#- name: young-ssl bro script
+#  copy:
+#    src=young-ssl.bro dest={{ broids_site }}/young-ssl.bro mode=644
+## https://github.com/JustinAzoff/bro_scripts
+- name: Extra bro script
+  copy:
+    src: "{{ item }}"
+    dest: "{{ broids_site }}/{{ item }}"
+    mode: '0644'
+  with_items:
+    - file_analysis_02.bro
+- name: add bro local configuration
+  template: src=local.bro.j2 dest="{{ broids_site }}/local.bro" mode=0644 backup=yes
+  notify:
+    - restart bro
+
+## Note: file is created by broctl: install and {{ broids_spool }}/broctl-config.sh
+##  -> {{ bro_prefix }}/share/broctl/scripts/broctl-config.sh
+- name: Check if broctl-config.sh is present
+  stat: path={{ broids_spool }}/broctl-config.sh
+  register: st
+- block:
+    - name: Reset send-mail config (not used by default)
+      lineinfile:
+        dest: "{{ broids_spool }}/broctl-config.sh"
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      with_items:
+## FIXME! not working/not idempotent ??? changed all time. other task filling w /usr/sbin/sendmail
+        - { regexp: '^sendmail=.*', line: 'sendmail=\"\"' }
+#     notify:
+#       - restart bro
+
+    - name: Configure broctl-config.sh
+      lineinfile:
+        dest: "{{ broids_etc }}/broctl.cfg"
+#        dest: "{{ broids_spool }}/broctl-config.sh"
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+        backup: yes
+      with_items:
+## log retention in days
+#        - { regexp: '^logexpireinterval=.*', line: "logexpireinterval={{ broids_logexpire_interval }}" }
+        - { regexp: '^LogExpireInterval = .*', line: "LogExpireInterval = {{ broids_logexpire_interval }}" }
+        - { regexp: '^StatsLogExpireInterval = .*', line: "StatsLogExpireInterval = {{ broids_logexpire_interval }}" }
+      notify:
+        - restart bro
+  when: st.stat.exists
+
+- name: configure bro maintenance script as scheduled task
+  cron:
+    name: "bro maintainance"
+    minute: "0-59/5"
+    user: "root"
+    job: "{{ bro_prefix }}/bin/broctl cron"
+    cron_file: "ansible_bro"
+
+- name: Configure node.cfg
+  template: src=node.cfg.j2 dest={{ broids_etc }}/node.cfg mode=0664 owner=root group={{ broids_group }}
+  notify:
+    - restart bro
+
+- include: pdns.yml
+  when: broids_pdns_enable
+
+- name: create directory for extracted files
+  file: dest="{{ item }}" state=directory mode=0755
+  with_items:
+    - "{{ bro_extractedfiles }}/http"
+    - "{{ bro_extractedfiles }}/ftp"
+
+- include: bro-scripts.yml
+
+- include: critical-stack.yml
+  when: bro_cs_enable is defined and bro_cs_enable
+
+## FIXME! idempotency
+- name: Ending bro configuration
+  command: "{{ item }}"
+  with_items:
+    - "{{ broids_broctl }} install"
+    - "{{ broids_broctl }} check"
+  notify:
+    - restart bro
+
+## OR http://serverfault.com/questions/421995/disable-tcp-offloading-completely-generically-and-easily
+- name: check network card checksum offloading state
+  command: ethtool --show-offload enp0s3
+  register: ethtool
+  changed_when: false
+## FIXME! not working on digitalocean droplet: got: 'rx-checksumming: on [fixed] tx-checksumming: off' and can't change
+- name: Disable network card offloading for enp0s3
+  command: ethtool --offload enp0s3 rx off tx off
+  when: "ethtool.stdout is defined and '-checksumming: on' in ethtool.stdout"
+  ignore_errors: true
+
+#- name: start BRO_PDNS API service
+#  command: >
+#    {{ broids_site }}/bro-pdns/bro_pdns.py serve
+#  environment:
+#    BRO_PDNS_DB: "mysql://{{ mysql_pdns_user }}::{{ mysql_pdns_pass }}@localhost/pdns"
+
+# Test
+# curl http://localhost:8081/dns/www.youtube.com
+
+- include: aide-hids.yml
+- include: monit.yml
+
+- name: Install testing tools
+  package:
+    name: "{{ broids_testing_pkgs }}"
+    state: present
+  when: broids_testing

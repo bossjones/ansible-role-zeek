@@ -1,0 +1,40 @@
+---
+- name: Set daemon fact
+  set_fact:
+    daemon: bro
+
+- name: monit package
+  package: name=monit state=present
+  register: pkg_result
+  until: pkg_result is success
+
+- block:
+    - block:
+        - name: set monit configuration for {{ daemon }}
+          template: src={{ daemon }}-monit.j2 dest=/etc/monit/monitrc.d/{{ daemon }} mode=0644 backup=yes
+          notify:
+            - restart monit
+        - name: enable monit {{ daemon }}
+          file: src=/etc/monit/monitrc.d/{{ daemon }} dest=/etc/monit/conf.d/{{ daemon }} state=link
+          notify:
+            - restart monit
+      when: ansible_distribution_release == 'trusty'
+    - block:
+        - name: set monit configuration for {{ daemon }}
+          template: src={{ daemon }}-monit.j2 dest=/etc/monit/conf-available/{{ daemon }} mode=0644 backup=yes
+          notify:
+            - restart monit
+        - name: enable monit {{ daemon }}
+          file: src=/etc/monit/conf-available/{{ daemon }} dest=/etc/monit/conf-enabled/{{ daemon }} state=link
+          notify:
+            - restart monit
+      when: ansible_distribution_release == 'xenial'
+  when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
+
+- name: allow monit status/summary from localhost
+  replace: dest={{ monitrc }} regexp={{ item.re }} replace={{ item.rep }}
+  with_items:
+    - { re: '^# set httpd port 2812 and', rep: ' set httpd port 2812 and' }
+    - { re: '^#     use address localhost', rep: '     use address localhost' }
+    - { re: '^#     allow localhost', rep: '     allow localhost' }
+#    - { re: '^#     allow admin:monit', rep: '     allow admin:monit' }
